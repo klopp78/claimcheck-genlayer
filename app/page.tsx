@@ -2,28 +2,49 @@
 
 import { useMemo, useState } from "react";
 import {
-  CLAIMCHECK_CONTRACT_ADDRESS,
-  readLatestClaimCheckResult,
-  submitClaimCheck,
+  CLAIM_REGISTRY_CONTRACT_ADDRESS,
+  readCheckCount,
+  readLatestCheckId,
+  readRegistryCheck,
+  submitRegistryCheck,
   type WalletAddress,
 } from "@/lib/genlayer";
 
-const repoUrl =
-  "https://github.com/klopp78/claimcheck-genlayer";
+const repoUrl = "https://github.com/klopp78/claimcheck-genlayer";
 const contractRepoUrl =
   "https://github.com/klopp78/claimcheck-genlayer/tree/main/contracts";
 const explorerUrl =
-  `https://explorer-studio.genlayer.com/address/${CLAIMCHECK_CONTRACT_ADDRESS}`;
+  `https://explorer-studio.genlayer.com/address/${CLAIM_REGISTRY_CONTRACT_ADDRESS}`;
 const xPostUrl = "https://x.com/Galax2u/status/2082509877990260885?s=20";
 
 const starterSources = [
-  "https://github.com/klopp78/genlayer-source-credibility-adjudicator",
-  "https://explorer-studio.genlayer.com/address/0x8dB841C6958547155283AD48Ff2B9B7be03BB42d",
-  "https://x.com/Galax2u/status/2082509877990260885?s=20",
+  "https://github.com/klopp78/claimcheck-genlayer",
+  "https://docs.genlayer.com/developers/intelligent-contracts/storage",
+  "https://docs.genlayer.com/developers/decentralized-applications/writing-data",
 ];
 
-type Verdict = "supported" | "mixed" | "insufficient";
-type ChainStatus = "idle" | "connecting" | "reading" | "submitting" | "done";
+type ChainStatus =
+  | "idle"
+  | "connecting"
+  | "reading"
+  | "submitting"
+  | "accepted"
+  | "error";
+
+type RegistryRecord = {
+  check_id?: string;
+  claim?: string;
+  source_urls?: string[];
+  submitted_by?: string;
+  result?: {
+    verdict?: string;
+    confidence?: number;
+    source_count?: number;
+    matched_sources?: number;
+    contradicted_sources?: number;
+    summary?: string;
+  };
+};
 
 declare global {
   interface Window {
@@ -36,62 +57,41 @@ declare global {
   }
 }
 
-function scoreClaim(claim: string, sources: string[]) {
-  const usableSources = sources.filter((source) => source.trim().length > 8);
-  const normalized = `${claim} ${usableSources.join(" ")}`.toLowerCase();
-  const strongSignals = [
-    "github",
-    "explorer",
-    "genlayer",
-    "contract",
-    "source",
-    "validator",
-    "consensus",
-  ].filter((word) => normalized.includes(word)).length;
+function parseRecord(value: unknown): RegistryRecord | null {
+  if (!value) return null;
+  if (typeof value === "object") return value as RegistryRecord;
+  if (typeof value !== "string") return null;
 
-  let verdict: Verdict = "insufficient";
-  if (usableSources.length >= 3 && strongSignals >= 4) verdict = "supported";
-  else if (usableSources.length >= 2 && strongSignals >= 2) verdict = "mixed";
-
-  const confidence = Math.min(
-    92,
-    Math.max(38, 34 + usableSources.length * 12 + strongSignals * 5),
-  );
-
-  return {
-    verdict,
-    confidence,
-    sourceCount: usableSources.length,
-    matchedSources:
-      verdict === "supported"
-        ? Math.max(2, usableSources.length - 1)
-        : verdict === "mixed"
-          ? Math.max(1, usableSources.length - 1)
-          : Math.min(1, usableSources.length),
-    contradictedSources: verdict === "mixed" ? 1 : 0,
-  };
+  try {
+    return JSON.parse(value) as RegistryRecord;
+  } catch {
+    return null;
+  }
 }
 
-function verdictLabel(verdict: Verdict) {
-  if (verdict === "supported") return "Supported";
-  if (verdict === "mixed") return "Mixed";
-  return "Insufficient";
+function shortAddress(value: string) {
+  if (value.length < 14) return value;
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 export default function Home() {
   const [claim, setClaim] = useState(
-    "Source Credibility Adjudicator is a reusable GenLayer Intelligent Contract for checking public claims against multiple web sources.",
+    "ClaimRegistry v2 stores every GenLayer claim check as a persistent on-chain registry entry instead of overwriting a single result slot.",
   );
   const [sources, setSources] = useState(starterSources.join("\n"));
   const [walletAddress, setWalletAddress] = useState<WalletAddress | null>(
     null,
   );
+  const [checkId, setCheckId] = useState("");
+  const [checkCount, setCheckCount] = useState("0");
+  const [latestCheckId, setLatestCheckId] = useState("");
   const [chainStatus, setChainStatus] = useState<ChainStatus>("idle");
   const [chainMessage, setChainMessage] = useState(
-    "Connect a wallet on Studio to read or submit contract-backed checks.",
+    "Deploy the v2 registry contract, connect a Studio wallet, then create or read checks from on-chain state.",
   );
-  const [latestResult, setLatestResult] = useState("");
   const [txHash, setTxHash] = useState("");
+  const [rawRecord, setRawRecord] = useState("");
+
   const parsedSources = useMemo(
     () =>
       sources
@@ -101,13 +101,12 @@ export default function Home() {
         .slice(0, 5),
     [sources],
   );
-  const result = useMemo(
-    () => scoreClaim(claim, parsedSources),
-    [claim, parsedSources],
-  );
+  const record = useMemo(() => parseRecord(rawRecord), [rawRecord]);
+  const result = record?.result;
 
   async function connectWallet() {
     if (!window.ethereum) {
+      setChainStatus("error");
       setChainMessage("No browser wallet was detected.");
       return;
     }
@@ -121,53 +120,110 @@ export default function Home() {
       if (!account) throw new Error("Wallet did not return an account.");
 
       setWalletAddress(account as WalletAddress);
-      setChainMessage("Wallet connected. Studio contract calls are ready.");
-      setChainStatus("done");
-    } catch (error) {
       setChainStatus("idle");
+      setChainMessage("Wallet connected. Registry reads and writes are ready.");
+    } catch (error) {
+      setChainStatus("error");
       setChainMessage(error instanceof Error ? error.message : "Wallet failed.");
     }
   }
 
-  async function readOnchainResult() {
+  async function refreshRegistry() {
     try {
       setChainStatus("reading");
-      const resultText = await readLatestClaimCheckResult(
-        walletAddress ?? undefined,
-      );
-      setLatestResult(
-        typeof resultText === "string"
-          ? resultText
-          : JSON.stringify(resultText, null, 2),
-      );
-      setChainMessage("Latest contract result loaded from GenLayer Studio.");
-      setChainStatus("done");
-    } catch (error) {
+      const [countValue, latestValue] = await Promise.all([
+        readCheckCount({ walletAddress: walletAddress ?? undefined }),
+        readLatestCheckId({ walletAddress: walletAddress ?? undefined }),
+      ]);
+      const nextLatest = String(latestValue ?? "");
+      setCheckCount(String(countValue ?? "0"));
+      setLatestCheckId(nextLatest);
+      setCheckId((current) => current || nextLatest);
       setChainStatus("idle");
+      setChainMessage("Registry metadata loaded from the v2 contract.");
+    } catch (error) {
+      setChainStatus("error");
       setChainMessage(
-        error instanceof Error ? error.message : "Could not read the contract.",
+        error instanceof Error
+          ? error.message
+          : "Could not read registry metadata.",
       );
     }
   }
 
-  async function submitOnchainCheck() {
+  async function readCheck(id = checkId) {
+    if (!id) {
+      setChainStatus("error");
+      setChainMessage("Enter a check ID or load the latest ID first.");
+      return;
+    }
+
+    try {
+      setChainStatus("reading");
+      const value = await readRegistryCheck(id, {
+        walletAddress: walletAddress ?? undefined,
+      });
+      setRawRecord(
+        typeof value === "string" ? value : JSON.stringify(value, null, 2),
+      );
+      setCheckId(id);
+      setChainStatus("idle");
+      setChainMessage(`Check ${id} loaded from contract storage.`);
+    } catch (error) {
+      setChainStatus("error");
+      setChainMessage(
+        error instanceof Error ? error.message : "Could not read that check.",
+      );
+    }
+  }
+
+  async function readLatestCheck() {
+    try {
+      setChainStatus("reading");
+      const latestValue = await readLatestCheckId({
+        walletAddress: walletAddress ?? undefined,
+      });
+      const id = String(latestValue ?? "");
+      setLatestCheckId(id);
+      await readCheck(id);
+    } catch (error) {
+      setChainStatus("error");
+      setChainMessage(
+        error instanceof Error ? error.message : "Could not read latest check.",
+      );
+    }
+  }
+
+  async function submitCheck() {
     if (!walletAddress) {
-      setChainMessage("Connect a wallet before submitting a transaction.");
+      setChainStatus("error");
+      setChainMessage("Connect a wallet before submitting a registry entry.");
       return;
     }
 
     try {
       setChainStatus("submitting");
-      const submitted = await submitClaimCheck({
+      setRawRecord("");
+      const submitted = await submitRegistryCheck({
         walletAddress,
         claim,
         sourceUrls: parsedSources,
       });
       setTxHash(submitted.hash);
-      setChainMessage("Transaction accepted by GenLayer Studio.");
-      setChainStatus("done");
+      setLatestCheckId(submitted.latestCheckId);
+      setCheckId(submitted.latestCheckId);
+      setRawRecord(
+        typeof submitted.check === "string"
+          ? submitted.check
+          : JSON.stringify(submitted.check, null, 2),
+      );
+      setChainStatus("accepted");
+      setChainMessage(
+        `Transaction accepted. Check ${submitted.latestCheckId} is now stored in the registry.`,
+      );
+      await refreshRegistry();
     } catch (error) {
-      setChainStatus("idle");
+      setChainStatus("error");
       setChainMessage(
         error instanceof Error
           ? error.message
@@ -182,10 +238,10 @@ export default function Home() {
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-5 py-5 md:flex-row md:items-center md:justify-between md:px-8">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#386f5c]">
-              GenLayer builder project
+              GenLayer registry project
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal text-[#171411] md:text-5xl">
-              ClaimCheck for GenLayer
+              ClaimRegistry for GenLayer
             </h1>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -205,14 +261,14 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-0 px-5 py-6 md:grid-cols-[1.05fr_0.95fr] md:px-8 md:py-8">
+      <section className="mx-auto grid max-w-7xl gap-0 px-5 py-6 md:grid-cols-[1.02fr_0.98fr] md:px-8 md:py-8">
         <div className="tool-surface border-[#ddd4c7] md:border-r">
           <div className="mb-6 flex flex-col gap-2">
-            <h2 className="text-xl font-semibold">Check a public claim</h2>
+            <h2 className="text-xl font-semibold">Create a registry check</h2>
             <p className="max-w-2xl text-sm leading-6 text-[#5c554c]">
-              Paste a claim and two to five public sources. The preview gives an
-              instant local estimate, while the Studio actions below use the
-              deployed Intelligent Contract for real read and write calls.
+              Each submission becomes a persistent on-chain registry entry with
+              its own check ID, sources, submitter, and consensus result. The UI
+              no longer calculates a local verdict.
             </p>
           </div>
 
@@ -238,16 +294,16 @@ export default function Home() {
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="metric">
+              <span>Registry size</span>
+              <strong>{checkCount}</strong>
+            </div>
+            <div className="metric">
+              <span>Latest ID</span>
+              <strong>{latestCheckId || "-"}</strong>
+            </div>
+            <div className="metric">
               <span>Sources</span>
-              <strong>{result.sourceCount}/5</strong>
-            </div>
-            <div className="metric">
-              <span>Matched</span>
-              <strong>{result.matchedSources}</strong>
-            </div>
-            <div className="metric">
-              <span>Contradicted</span>
-              <strong>{result.contradictedSources}</strong>
+              <strong>{parsedSources.length}/5</strong>
             </div>
           </div>
 
@@ -255,10 +311,12 @@ export default function Home() {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-sm font-semibold text-[#171411]">
-                  Studio contract actions
+                  Studio registry actions
                 </p>
                 <p className="mt-1 break-all text-xs leading-5 text-[#746b60]">
-                  {walletAddress ?? CLAIMCHECK_CONTRACT_ADDRESS}
+                  {walletAddress
+                    ? shortAddress(walletAddress)
+                    : CLAIM_REGISTRY_CONTRACT_ADDRESS}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -273,33 +331,55 @@ export default function Home() {
                 <button
                   className="action-button"
                   disabled={chainStatus === "reading"}
-                  onClick={readOnchainResult}
+                  onClick={refreshRegistry}
                   type="button"
                 >
-                  Read latest
+                  Refresh registry
                 </button>
                 <button
                   className="action-button primary"
                   disabled={chainStatus === "submitting"}
-                  onClick={submitOnchainCheck}
+                  onClick={submitCheck}
                   type="button"
                 >
-                  Submit on GenLayer
+                  Create check
                 </button>
               </div>
             </div>
-            <p className="mt-3 text-sm leading-6 text-[#5c554c]">
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <input
+                aria-label="Check ID"
+                className="text-input"
+                onChange={(event) => setCheckId(event.target.value)}
+                placeholder="Check ID"
+                value={checkId}
+              />
+              <button
+                className="action-button"
+                disabled={chainStatus === "reading"}
+                onClick={() => readCheck()}
+                type="button"
+              >
+                Read check
+              </button>
+              <button
+                className="action-button"
+                disabled={chainStatus === "reading"}
+                onClick={readLatestCheck}
+                type="button"
+              >
+                Read latest
+              </button>
+            </div>
+
+            <p className={`mt-3 text-sm leading-6 ${chainStatus === "error" ? "text-[#9b2c2c]" : "text-[#5c554c]"}`}>
               {chainMessage}
             </p>
             {txHash ? (
               <p className="mt-2 break-all text-xs font-semibold text-[#386f5c]">
                 Transaction: {txHash}
               </p>
-            ) : null}
-            {latestResult ? (
-              <pre className="mt-3 max-h-44 overflow-auto rounded-lg bg-[#171411] p-3 text-xs leading-5 text-[#f7f4ef]">
-                {latestResult}
-              </pre>
             ) : null}
           </div>
         </div>
@@ -309,68 +389,94 @@ export default function Home() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#386f5c]">
-                  Preview verdict
+                  Consensus result
                 </p>
-                <h2 className="mt-2 text-3xl font-semibold">
-                  {verdictLabel(result.verdict)}
+                <h2 className="mt-2 text-3xl font-semibold capitalize">
+                  {result?.verdict ?? "No check loaded"}
                 </h2>
               </div>
               <div className="confidence">
-                <span>{result.confidence}</span>
+                <span>{result?.confidence ?? "-"}</span>
                 <small>/100</small>
               </div>
             </div>
 
-            <div className="mt-8 h-3 overflow-hidden rounded-full bg-[#ebe2d3]">
-              <div
-                className="h-full rounded-full bg-[#25a06a]"
-                style={{ width: `${result.confidence}%` }}
-              />
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              <div className="metric">
+                <span>Reviewed</span>
+                <strong>{result?.source_count ?? "-"}</strong>
+              </div>
+              <div className="metric">
+                <span>Matched</span>
+                <strong>{result?.matched_sources ?? "-"}</strong>
+              </div>
+              <div className="metric">
+                <span>Contradicted</span>
+                <strong>{result?.contradicted_sources ?? "-"}</strong>
+              </div>
             </div>
 
             <p className="mt-6 text-sm leading-6 text-[#5c554c]">
-              The deployed Intelligent Contract uses nondeterministic web
-              rendering and LLM extraction. Validators independently re-run the
-              adjudication and compare stable fields instead of accepting a
-              single generated answer.
+              {result?.summary ??
+                "Create or read a check to show the consensus-driven registry result stored by the contract."}
             </p>
+
+            {record ? (
+              <div className="mt-5 rounded-lg border border-[#ddd4c7] bg-[#f7f4ef] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#386f5c]">
+                  Stored registry entry
+                </p>
+                <p className="mt-2 text-sm font-semibold">
+                  Check #{record.check_id}
+                </p>
+                <p className="mt-2 break-words text-sm leading-6 text-[#5c554c]">
+                  {record.claim}
+                </p>
+                <p className="mt-2 break-all text-xs text-[#746b60]">
+                  Submitter: {record.submitted_by}
+                </p>
+              </div>
+            ) : null}
+
+            {rawRecord ? (
+              <pre className="mt-4 max-h-56 overflow-auto rounded-lg bg-[#171411] p-3 text-xs leading-5 text-[#f7f4ef]">
+                {rawRecord}
+              </pre>
+            ) : null}
 
             <div className="mt-6 grid gap-3">
               <a className="evidence-link" href={explorerUrl} target="_blank">
                 GenLayer Explorer Contract
               </a>
               <a className="evidence-link" href={repoUrl} target="_blank">
-                Project source and SDK wiring
+                Project source and registry app
               </a>
               <a
                 className="evidence-link"
                 href={contractRepoUrl}
                 target="_blank"
               >
-                Contract source in this repo
-              </a>
-              <a className="evidence-link" href={xPostUrl} target="_blank">
-                Public launch announcement
+                Persistent registry contract
               </a>
             </div>
           </div>
 
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             <div className="info-tile">
-              <span>Contract primitive</span>
-              <strong>Claim adjudication</strong>
+              <span>Storage model</span>
+              <strong>TreeMap registry</strong>
             </div>
             <div className="info-tile">
-              <span>Consensus pattern</span>
-              <strong>Independent rerun</strong>
+              <span>Check history</span>
+              <strong>Persistent IDs</strong>
             </div>
             <div className="info-tile">
-              <span>Project status</span>
-              <strong>Deployed on Studio</strong>
+              <span>Verdict source</span>
+              <strong>Consensus only</strong>
             </div>
             <div className="info-tile">
-              <span>Submission path</span>
-              <strong>Builder project</strong>
+              <span>Local mock</span>
+              <strong>Removed</strong>
             </div>
           </div>
         </aside>
@@ -379,26 +485,24 @@ export default function Home() {
       <section className="border-t border-[#ddd4c7] bg-[#171411] text-[#f7f4ef]">
         <div className="mx-auto grid max-w-7xl gap-6 px-5 py-8 md:grid-cols-3 md:px-8">
           <div>
-            <h2 className="text-lg font-semibold">Why it exists</h2>
+            <h2 className="text-lg font-semibold">Registry, not latest slot</h2>
             <p className="mt-3 text-sm leading-6 text-[#d7cec1]">
-              Airdrop research, ecosystem announcements, and funding claims
-              often move faster than verification. ClaimCheck packages a
-              reusable GenLayer contract into a product workflow.
+              Every check is stored under a durable ID, so previous claims remain
+              readable after new submissions.
             </p>
           </div>
           <div>
-            <h2 className="text-lg font-semibold">What reviewers get</h2>
+            <h2 className="text-lg font-semibold">Consensus result only</h2>
             <p className="mt-3 text-sm leading-6 text-[#d7cec1]">
-              Readable source, deployed Explorer evidence, a live product
-              surface, and a GenLayer SDK path for reading results and
-              submitting adjudication transactions.
+              The frontend does not score claims locally. It displays contract
+              reads and accepted transaction results.
             </p>
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Next integration</h2>
+            <h2 className="text-lg font-semibold">Reviewer path</h2>
             <p className="mt-3 text-sm leading-6 text-[#d7cec1]">
-              Wallet users can submit new adjudications to the deployed Studio
-              contract and read the latest accepted result from the app.
+              The repository includes the registry contract, SDK calls, app
+              source, and live project surface for a new Project submission.
             </p>
           </div>
         </div>

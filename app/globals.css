@@ -82,6 +82,23 @@ a {
   box-shadow: 0 0 0 3px rgba(37, 160, 106, 0.16);
 }
 
+.text-input {
+  background: #fffdf8;
+  border: 1px solid #d7cec1;
+  border-radius: 8px;
+  color: #171411;
+  flex: 1 1 12rem;
+  font: inherit;
+  min-height: 2.45rem;
+  outline: none;
+  padding: 0 0.85rem;
+}
+
+.text-input:focus {
+  border-color: #25a06a;
+  box-shadow: 0 0 0 3px rgba(37, 160, 106, 0.16);
+}
+
 .metric,
 .info-tile {
   background: #fffdf8;

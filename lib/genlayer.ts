@@ -2,49 +2,83 @@ import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-export const CLAIMCHECK_CONTRACT_ADDRESS =
-  "0x8dB841C6958547155283AD48Ff2B9B7be03BB42d" as const;
+export const CLAIM_REGISTRY_CONTRACT_ADDRESS =
+  "0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365" as const;
 
 export type WalletAddress = `0x${string}`;
 
-export type ClaimCheckInput = {
+export type ClaimRegistryInput = {
   walletAddress: WalletAddress;
   claim: string;
   sourceUrls: string[];
 };
 
-export function createClaimCheckClient(walletAddress?: WalletAddress) {
+export type ChainReadOptions = {
+  walletAddress?: WalletAddress;
+  contractAddress?: `0x${string}`;
+};
+
+export function createClaimRegistryClient(walletAddress?: WalletAddress) {
   return createClient({
     chain: studionet,
     account: walletAddress,
   });
 }
 
-export async function readLatestClaimCheckResult(
-  walletAddress?: WalletAddress,
-) {
-  const client = createClaimCheckClient(walletAddress);
+function registryAddress(contractAddress?: `0x${string}`) {
+  return contractAddress ?? CLAIM_REGISTRY_CONTRACT_ADDRESS;
+}
+
+export async function readCheckCount(options: ChainReadOptions = {}) {
+  const client = createClaimRegistryClient(options.walletAddress);
 
   return client.readContract({
-    address: CLAIMCHECK_CONTRACT_ADDRESS,
-    functionName: "get_latest_result",
+    address: registryAddress(options.contractAddress),
+    functionName: "get_check_count",
     args: [],
     jsonSafeReturn: true,
     leaderOnly: true,
   });
 }
 
-export async function submitClaimCheck({
+export async function readLatestCheckId(options: ChainReadOptions = {}) {
+  const client = createClaimRegistryClient(options.walletAddress);
+
+  return client.readContract({
+    address: registryAddress(options.contractAddress),
+    functionName: "get_latest_check_id",
+    args: [],
+    jsonSafeReturn: true,
+    leaderOnly: true,
+  });
+}
+
+export async function readRegistryCheck(
+  checkId: string,
+  options: ChainReadOptions = {},
+) {
+  const client = createClaimRegistryClient(options.walletAddress);
+
+  return client.readContract({
+    address: registryAddress(options.contractAddress),
+    functionName: "get_check",
+    args: [checkId],
+    jsonSafeReturn: true,
+    leaderOnly: true,
+  });
+}
+
+export async function submitRegistryCheck({
   walletAddress,
   claim,
   sourceUrls,
-}: ClaimCheckInput) {
-  const client = createClaimCheckClient(walletAddress);
+}: ClaimRegistryInput) {
+  const client = createClaimRegistryClient(walletAddress);
   await client.connect("studionet");
 
   const hash = await client.writeContract({
-    address: CLAIMCHECK_CONTRACT_ADDRESS,
-    functionName: "adjudicate_claim",
+    address: CLAIM_REGISTRY_CONTRACT_ADDRESS,
+    functionName: "create_check",
     args: [claim, sourceUrls],
     value: BigInt(0),
     leaderOnly: false,
@@ -55,5 +89,10 @@ export async function submitClaimCheck({
     status: TransactionStatus.ACCEPTED,
   });
 
-  return { hash, receipt };
+  const latestCheckId = await readLatestCheckId({ walletAddress });
+  const check = await readRegistryCheck(String(latestCheckId), {
+    walletAddress,
+  });
+
+  return { hash, receipt, latestCheckId: String(latestCheckId), check };
 }

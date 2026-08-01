@@ -1,42 +1,64 @@
-# ClaimCheck for GenLayer
+# ClaimRegistry for GenLayer
 
-ClaimCheck is a small GenLayer project that turns the deployed Source Credibility Adjudicator Intelligent Contract into a reviewer-facing product. A user enters a claim and two to five public URLs, previews the expected verdict shape, then can read from or submit to the deployed Studio contract through the GenLayer SDK.
+ClaimRegistry is a GenLayer Project that turns public claim verification into a persistent on-chain registry. Each claim check receives its own durable `check_id`, source list, submitter address, and consensus-produced result instead of overwriting one global result slot.
 
 ## Live Demo
 
 - App: https://klopp78.github.io/claimcheck-genlayer/
-- Contract Explorer: https://explorer-studio.genlayer.com/address/0x8dB841C6958547155283AD48Ff2B9B7be03BB42d
-- Deployed contract: `0x8dB841C6958547155283AD48Ff2B9B7be03BB42d`
+- Contract Explorer: https://explorer-studio.genlayer.com/address/0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365
+- Deployed v2 contract: `0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365`
+
+## Why v2
+
+The first ClaimCheck version exposed a useful product surface but still had two review weaknesses:
+
+- the contract stored only `latest_result`, so each check overwrote the previous one
+- the frontend displayed a local keyword-matching preview before reading a contract result
+
+This v2 removes both issues:
+
+- `contracts/claim_registry.py` stores checks in `TreeMap[str, str]`
+- `check_ids: DynArray[str]` preserves a readable history of check IDs
+- `create_check()` writes a new registry entry for every submitted claim
+- `get_check(check_id)` reads any prior check by ID
+- `get_latest_check_id()` and `get_check_count()` expose registry metadata
+- `app/page.tsx` no longer computes verdicts locally
 
 ## GenLayer Integration
 
-This repository includes the full Intelligent Contract source and the frontend SDK integration:
-
-- Contract source: `contracts/source_credibility_adjudicator.py`
+- Contract source: `contracts/claim_registry.py`
 - GenLayer SDK client: `lib/genlayer.ts`
 - Product surface: `app/page.tsx`
 
 The SDK client uses `genlayer-js` on `studionet` and exposes:
 
-- `readLatestClaimCheckResult()` for `readContract({ functionName: "get_latest_result" })`
-- `submitClaimCheck()` for `writeContract({ functionName: "adjudicate_claim" })`
-- `waitForTransactionReceipt({ status: TransactionStatus.ACCEPTED })` to track the transaction lifecycle
+- `submitRegistryCheck()` for `writeContract({ functionName: "create_check" })`
+- `readRegistryCheck()` for `readContract({ functionName: "get_check" })`
+- `readLatestCheckId()` for `readContract({ functionName: "get_latest_check_id" })`
+- `readCheckCount()` for `readContract({ functionName: "get_check_count" })`
+- `waitForTransactionReceipt({ status: TransactionStatus.ACCEPTED })` for transaction lifecycle tracking
 
 ## Contract Behavior
 
-`adjudicate_claim(claim, source_urls)` requires:
+`create_check(claim, source_urls)` requires:
 
 - a claim of at least 12 characters
 - two to five source URLs
 
-The contract renders source pages with GenLayer nondeterministic web access, asks an LLM to produce a compact JSON verdict, then has validators independently re-run the same adjudication and compare stable fields:
+The contract renders each source page with GenLayer nondeterministic web access, asks an LLM to produce a compact JSON verdict, and then validators independently re-run the same adjudication before a registry entry is stored.
 
-- exact `verdict`
-- confidence within 20 points
-- exact `source_count`
-- matched and contradicted source counts within one source
+Each stored record includes:
 
-The accepted result is stored and exposed through `get_latest_result()`.
+- `check_id`
+- `claim`
+- `source_urls`
+- `submitted_by`
+- `result.verdict`
+- `result.confidence`
+- `result.source_count`
+- `result.matched_sources`
+- `result.contradicted_sources`
+- `result.summary`
 
 ## Run Locally
 

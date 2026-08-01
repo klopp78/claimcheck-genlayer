@@ -5,7 +5,7 @@ import json
 import typing
 
 
-class SourceVerdict(typing.NamedTuple):
+class RegistryVerdict(typing.NamedTuple):
     verdict: str
     confidence: u8
     source_count: u8
@@ -14,22 +14,36 @@ class SourceVerdict(typing.NamedTuple):
     summary: str
 
 
-class SourceCredibilityAdjudicator(gl.Contract):
-    """Adjudicates whether a public claim is supported by supplied web sources."""
+class ClaimRegistry(gl.Contract):
+    """Persistent registry of consensus-adjudicated public claim checks."""
 
-    latest_claim: str
-    latest_result: str
+    check_count: u64
+    latest_check_id: str
+    check_ids: DynArray[str]
+    checks: TreeMap[str, str]
 
     def __init__(self):
-        self.latest_claim = ""
-        self.latest_result = ""
+        self.check_count = u64(0)
+        self.latest_check_id = ""
 
     @gl.public.view
-    def get_latest_result(self) -> str:
-        return self.latest_result
+    def get_check_count(self) -> u64:
+        return self.check_count
+
+    @gl.public.view
+    def get_latest_check_id(self) -> str:
+        return self.latest_check_id
+
+    @gl.public.view
+    def get_check(self, check_id: str) -> str:
+        return self.checks.get(check_id, "")
+
+    @gl.public.view
+    def list_check_ids(self) -> str:
+        return json.dumps([check_id for check_id in self.check_ids], separators=(",", ":"))
 
     @gl.public.write
-    def adjudicate_claim(self, claim: str, source_urls: DynArray[str]):
+    def create_check(self, claim: str, source_urls: DynArray[str]):
         if len(claim) < 12:
             raise Exception("claim is too short")
         if len(source_urls) < 2:
@@ -37,8 +51,10 @@ class SourceCredibilityAdjudicator(gl.Contract):
         if len(source_urls) > 5:
             raise Exception("use five sources or fewer")
 
+        source_list = [url for url in source_urls]
+
         def leader_fn():
-            return _adjudicate_from_sources(claim, source_urls)
+            return _adjudicate_from_sources(claim, source_list)
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
@@ -46,7 +62,7 @@ class SourceCredibilityAdjudicator(gl.Contract):
 
             try:
                 proposed = _parse_verdict(leader_result.calldata)
-                independent = _parse_verdict(_adjudicate_from_sources(claim, source_urls))
+                independent = _parse_verdict(_adjudicate_from_sources(claim, source_list))
             except Exception:
                 return False
 
@@ -66,11 +82,24 @@ class SourceCredibilityAdjudicator(gl.Contract):
             return matched_delta <= 1 and contradicted_delta <= 1
 
         agreed_json = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
-        self.latest_claim = claim
-        self.latest_result = agreed_json
+        verdict = json.loads(agreed_json)
+
+        self.check_count = u64(int(self.check_count) + 1)
+        check_id = str(int(self.check_count))
+        record = {
+            "check_id": check_id,
+            "claim": claim,
+            "source_urls": source_list,
+            "submitted_by": str(gl.message.sender_address),
+            "result": verdict,
+        }
+
+        self.checks[check_id] = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        self.check_ids.append(check_id)
+        self.latest_check_id = check_id
 
 
-def _adjudicate_from_sources(claim: str, source_urls: DynArray[str]) -> str:
+def _adjudicate_from_sources(claim: str, source_urls: typing.Sequence[str]) -> str:
     source_payloads = []
     for url in source_urls:
         page = gl.nondet.web.render(url, mode="text")
@@ -103,6 +132,7 @@ Rules:
 - Use "mixed" when material sources disagree or support only part of the claim.
 - Do not reward claims that rely on a single source duplicated across mirrors.
 - Count only direct evidence, not vague similarity.
+- Do not invent support that is not visible in the rendered source text.
 """
 
     raw = gl.nondet.exec_prompt(prompt)
@@ -118,7 +148,7 @@ Rules:
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
 
 
-def _parse_verdict(raw_json: str) -> SourceVerdict:
+def _parse_verdict(raw_json: str) -> RegistryVerdict:
     data = json.loads(raw_json)
     verdict = str(data["verdict"]).lower()
     if verdict not in ("supported", "contradicted", "mixed", "insufficient"):
@@ -141,7 +171,7 @@ def _parse_verdict(raw_json: str) -> SourceVerdict:
     if len(summary) == 0 or len(summary) > 450:
         raise Exception("invalid summary")
 
-    return SourceVerdict(
+    return RegistryVerdict(
         verdict=verdict,
         confidence=u8(confidence),
         source_count=u8(source_count),
