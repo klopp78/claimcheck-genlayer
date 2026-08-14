@@ -1,21 +1,22 @@
 # ClaimRegistry for GenLayer
 
-ClaimRegistry is a GenLayer Project that turns public claim verification into a persistent on-chain registry. Each claim check receives its own durable `check_id`, source list, submitter address, and consensus-produced result instead of overwriting one global result slot.
+ClaimRegistry is a GenLayer Project that turns public claim verification into a persistent on-chain registry. Each claim check receives its own durable `check_id`, source provenance manifest, evidence hash commitment, submitter address, accepted-write binding, and consensus-produced result instead of overwriting one global result slot.
 
 ## Live Demo
 
 - App: https://klopp78.github.io/claimcheck-genlayer/
 - Contract Explorer: https://explorer-studio.genlayer.com/address/0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365
 - Deployed v2 contract: `0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365`
+- v3 contract source: `contracts/claim_registry.py`
 
-## Why v2
+## Why v3
 
 The first ClaimCheck version exposed a useful product surface but still had two review weaknesses:
 
 - the contract stored only `latest_result`, so each check overwrote the previous one
 - the frontend displayed a local keyword-matching preview before reading a contract result
 
-This v2 removes both issues:
+The v2 registry removed both issues:
 
 - `contracts/claim_registry.py` stores checks in `TreeMap[str, str]`
 - `check_ids: DynArray[str]` preserves a readable history of check IDs
@@ -23,6 +24,16 @@ This v2 removes both issues:
 - `get_check(check_id)` reads any prior check by ID
 - `get_latest_check_id()` and `get_check_count()` expose registry metadata
 - `app/page.tsx` no longer computes verdicts locally
+
+The v3 source responds to the steward request for stronger evidence handling:
+
+- every source URL must use HTTPS
+- duplicate source URLs are rejected before consensus begins
+- every accepted check must include at least two independent source hosts
+- the contract stores a `source_manifest` with URL, host, source type, and URL hash
+- every rendered source snapshot gets a deterministic `snapshot_hash`
+- the consensus result includes an `evidence_bundle_hash`
+- every registry record stores `accepted_write.check_id`, `registry_sequence`, and `evidence_bundle_hash`
 
 ## GenLayer Integration
 
@@ -43,21 +54,31 @@ The SDK client uses `genlayer-js` on `studionet` and exposes:
 `create_check(claim, source_urls)` requires:
 
 - a claim of at least 12 characters
-- two to five source URLs
+- two to five HTTPS source URLs
+- no duplicate source URLs
+- at least two independent source hosts
 
-The contract renders each source page with GenLayer nondeterministic web access, asks an LLM to produce a compact JSON verdict, and then validators independently re-run the same adjudication before a registry entry is stored.
+The contract renders each source page with GenLayer nondeterministic web access, creates a provenance manifest, commits each rendered evidence snapshot to a deterministic hash, asks an LLM to produce a compact JSON verdict, and then validators independently re-run the same adjudication before a registry entry is stored.
 
 Each stored record includes:
 
 - `check_id`
 - `claim`
 - `source_urls`
+- `source_manifest[].host`
+- `source_manifest[].source_type`
+- `source_manifest[].url_hash`
 - `submitted_by`
+- `accepted_write.check_id`
+- `accepted_write.registry_sequence`
+- `accepted_write.evidence_bundle_hash`
 - `result.verdict`
 - `result.confidence`
 - `result.source_count`
+- `result.unique_hosts`
 - `result.matched_sources`
 - `result.contradicted_sources`
+- `result.evidence_bundle_hash`
 - `result.summary`
 
 ## Run Locally

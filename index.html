@@ -242,26 +242,29 @@
       <section class="panel">
         <h2>Persistent claim checks</h2>
         <p>
-          ClaimRegistry v2 stores every public claim check as its own on-chain
-          registry entry. New submissions no longer overwrite a single global
-          result slot.
+          ClaimRegistry v3 stores every public claim check as its own on-chain
+          registry entry with a source provenance manifest, source diversity
+          checks, evidence hash commitments, and an accepted-write check ID.
         </p>
         <div class="metrics">
           <div class="metric"><span>Storage</span><strong>TreeMap</strong></div>
-          <div class="metric"><span>History</span><strong>Check IDs</strong></div>
-          <div class="metric"><span>Frontend verdict</span><strong>None</strong></div>
-          <div class="metric"><span>Result source</span><strong>Consensus</strong></div>
+          <div class="metric"><span>Provenance</span><strong>Hosts</strong></div>
+          <div class="metric"><span>Evidence</span><strong>Hashes</strong></div>
+          <div class="metric"><span>Write binding</span><strong>Check ID</strong></div>
         </div>
       </section>
 
       <aside class="panel">
         <div class="card">
-          <p class="eyebrow">Deployed v2 contract</p>
+          <p class="eyebrow">Deployed v2 contract, v3 source update</p>
           <h2><code>0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365</code></h2>
           <p>
-            The app source calls the v2 contract through GenLayer SDK methods:
+            The app source calls the registry contract through GenLayer SDK methods:
             <code>create_check</code>, <code>get_check</code>,
             <code>get_latest_check_id</code>, and <code>get_check_count</code>.
+            The v3 contract source adds HTTPS-only source validation, duplicate
+            rejection, independent host requirements, source manifests,
+            rendered snapshot hashes, and accepted-write metadata.
           </p>
           <p><a class="evidence" href="https://explorer-studio.genlayer.com/address/0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365" target="_blank">GenLayer Explorer Contract</a></p>
           <p><a class="evidence" href="https://github.com/klopp78/claimcheck-genlayer/tree/main/lib" target="_blank">GenLayer SDK registry path</a></p>
@@ -270,9 +273,9 @@
 
         <div class="tiles">
           <div class="tile"><span>Write method</span><strong>create_check</strong></div>
-          <div class="tile"><span>Read method</span><strong>get_check</strong></div>
+          <div class="tile"><span>Source rule</span><strong>2+ hosts</strong></div>
+          <div class="tile"><span>Evidence model</span><strong>Snapshot hash</strong></div>
           <div class="tile"><span>Mock scoring</span><strong>Removed</strong></div>
-          <div class="tile"><span>Submission path</span><strong>New Project</strong></div>
         </div>
       </aside>
     </main>
@@ -289,7 +292,7 @@
         </section>
         <section>
           <h2>Reviewer evidence</h2>
-          <p>The repository includes the v2 contract, SDK client, app source, and live project surface.</p>
+          <p>The repository includes the v3 source update requested by the steward: provenance, diversity, evidence hashes, and accepted-write binding.</p>
         </section>
       </div>
     </footer>

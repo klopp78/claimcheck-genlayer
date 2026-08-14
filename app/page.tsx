@@ -35,13 +35,27 @@ type RegistryRecord = {
   check_id?: string;
   claim?: string;
   source_urls?: string[];
+  source_manifest?: {
+    source_index?: number;
+    url?: string;
+    host?: string;
+    source_type?: string;
+    url_hash?: string;
+  }[];
   submitted_by?: string;
+  accepted_write?: {
+    check_id?: string;
+    registry_sequence?: number;
+    evidence_bundle_hash?: string;
+  };
   result?: {
     verdict?: string;
     confidence?: number;
     source_count?: number;
+    unique_hosts?: number;
     matched_sources?: number;
     contradicted_sources?: number;
+    evidence_bundle_hash?: string;
     summary?: string;
   };
 };
@@ -76,7 +90,7 @@ function shortAddress(value: string) {
 
 export default function Home() {
   const [claim, setClaim] = useState(
-    "ClaimRegistry v2 stores every GenLayer claim check as a persistent on-chain registry entry instead of overwriting a single result slot.",
+    "ClaimRegistry v3 preserves each GenLayer claim check with source provenance, evidence hashes, and an accepted-write check ID.",
   );
   const [sources, setSources] = useState(starterSources.join("\n"));
   const [walletAddress, setWalletAddress] = useState<WalletAddress | null>(
@@ -87,7 +101,7 @@ export default function Home() {
   const [latestCheckId, setLatestCheckId] = useState("");
   const [chainStatus, setChainStatus] = useState<ChainStatus>("idle");
   const [chainMessage, setChainMessage] = useState(
-    "Deploy the v2 registry contract, connect a Studio wallet, then create or read checks from on-chain state.",
+    "Use the deployed registry contract, connect a Studio wallet, then create or read checks from on-chain state. The repository includes the v3 source update for provenance and evidence hashes.",
   );
   const [txHash, setTxHash] = useState("");
   const [rawRecord, setRawRecord] = useState("");
@@ -140,7 +154,7 @@ export default function Home() {
       setLatestCheckId(nextLatest);
       setCheckId((current) => current || nextLatest);
       setChainStatus("idle");
-      setChainMessage("Registry metadata loaded from the v2 contract.");
+      setChainMessage("Registry metadata loaded from the deployed registry contract.");
     } catch (error) {
       setChainStatus("error");
       setChainMessage(
@@ -267,8 +281,8 @@ export default function Home() {
             <h2 className="text-xl font-semibold">Create a registry check</h2>
             <p className="max-w-2xl text-sm leading-6 text-[#5c554c]">
               Each submission becomes a persistent on-chain registry entry with
-              its own check ID, sources, submitter, and consensus result. The UI
-              no longer calculates a local verdict.
+              its own check ID, provenance manifest, evidence hashes, submitter,
+              and consensus result. The UI no longer calculates a local verdict.
             </p>
           </div>
 
@@ -283,7 +297,7 @@ export default function Home() {
           />
 
           <label className="field-label mt-5" htmlFor="sources">
-            Source URLs
+            Source URLs from at least two hosts
           </label>
           <textarea
             id="sources"
@@ -401,10 +415,14 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            <div className="mt-8 grid gap-3 sm:grid-cols-4">
               <div className="metric">
                 <span>Reviewed</span>
                 <strong>{result?.source_count ?? "-"}</strong>
+              </div>
+              <div className="metric">
+                <span>Hosts</span>
+                <strong>{result?.unique_hosts ?? "-"}</strong>
               </div>
               <div className="metric">
                 <span>Matched</span>
@@ -435,6 +453,25 @@ export default function Home() {
                 <p className="mt-2 break-all text-xs text-[#746b60]">
                   Submitter: {record.submitted_by}
                 </p>
+                <p className="mt-2 break-all text-xs text-[#746b60]">
+                  Evidence hash:{" "}
+                  {record.accepted_write?.evidence_bundle_hash ??
+                    result?.evidence_bundle_hash ??
+                    "-"}
+                </p>
+                <p className="mt-2 break-all text-xs text-[#746b60]">
+                  Accepted write ID: {record.accepted_write?.check_id ?? "-"}
+                </p>
+                {record.source_manifest?.length ? (
+                  <ul className="mt-3 space-y-1 text-xs text-[#746b60]">
+                    {record.source_manifest.map((source) => (
+                      <li key={`${source.source_index}-${source.host}`}>
+                        {source.source_index}. {source.host} ·{" "}
+                        {source.source_type} · {source.url_hash}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             ) : null}
 
@@ -467,16 +504,16 @@ export default function Home() {
               <strong>TreeMap registry</strong>
             </div>
             <div className="info-tile">
-              <span>Check history</span>
-              <strong>Persistent IDs</strong>
+              <span>Source model</span>
+              <strong>Provenance manifest</strong>
             </div>
             <div className="info-tile">
-              <span>Verdict source</span>
-              <strong>Consensus only</strong>
+              <span>Evidence model</span>
+              <strong>Snapshot hashes</strong>
             </div>
             <div className="info-tile">
-              <span>Local mock</span>
-              <strong>Removed</strong>
+              <span>Write binding</span>
+              <strong>Accepted check ID</strong>
             </div>
           </div>
         </aside>
@@ -499,10 +536,10 @@ export default function Home() {
             </p>
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Reviewer path</h2>
+            <h2 className="text-lg font-semibold">Provenance path</h2>
             <p className="mt-3 text-sm leading-6 text-[#d7cec1]">
-              The repository includes the registry contract, SDK calls, app
-              source, and live project surface for a new Project submission.
+              Each stored check includes source hosts, source types, URL hashes,
+              evidence bundle hash, and the accepted write ID.
             </p>
           </div>
         </div>
