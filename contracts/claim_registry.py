@@ -12,7 +12,7 @@ class RegistryVerdict(typing.NamedTuple):
     unique_hosts: u8
     matched_sources: u8
     contradicted_sources: u8
-    evidence_bundle_hash: str
+    source_bundle_hash: str
     summary: str
 
 
@@ -55,11 +55,16 @@ class ClaimRegistry(gl.Contract):
 
         source_list = _validate_sources([url for url in source_urls])
         source_manifest = _source_manifest(source_list)
+        source_bundle_hash = _stable_hash(
+            json.dumps(source_manifest, sort_keys=True, separators=(",", ":"))
+        )
         if len({source["host"] for source in source_manifest}) < 2:
             raise Exception("at least two independent source hosts are required")
 
         def leader_fn():
-            return _adjudicate_from_sources(claim, source_list, source_manifest)
+            return _adjudicate_from_sources(
+                claim, source_list, source_manifest, source_bundle_hash
+            )
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
@@ -68,7 +73,9 @@ class ClaimRegistry(gl.Contract):
             try:
                 proposed = _parse_verdict(leader_result.calldata)
                 independent = _parse_verdict(
-                    _adjudicate_from_sources(claim, source_list, source_manifest)
+                    _adjudicate_from_sources(
+                        claim, source_list, source_manifest, source_bundle_hash
+                    )
                 )
             except Exception:
                 return False
@@ -85,7 +92,10 @@ class ClaimRegistry(gl.Contract):
             if proposed.unique_hosts != independent.unique_hosts:
                 return False
 
-            if proposed.evidence_bundle_hash != independent.evidence_bundle_hash:
+            # Only deterministic user-supplied provenance is an equality
+            # boundary. Rendered web pages can legitimately differ between
+            # validator runs, so their snapshot hashes must never split quorum.
+            if proposed.source_bundle_hash != independent.source_bundle_hash:
                 return False
 
             matched_delta = abs(int(proposed.matched_sources) - int(independent.matched_sources))
@@ -109,7 +119,7 @@ class ClaimRegistry(gl.Contract):
             "accepted_write": {
                 "check_id": check_id,
                 "registry_sequence": int(self.check_count),
-                "evidence_bundle_hash": verdict["evidence_bundle_hash"],
+                "source_bundle_hash": verdict["source_bundle_hash"],
             },
         }
 
@@ -123,14 +133,15 @@ def _adjudicate_from_sources(
     claim: str,
     source_urls: typing.Sequence[str],
     source_manifest: typing.Sequence[dict],
+    source_bundle_hash: str,
 ) -> str:
     source_payloads = []
-    evidence_hashes = []
+    observed_snapshot_hashes = []
     for index, url in enumerate(source_urls):
         page = gl.nondet.web.render(url, mode="text")
         rendered_text = page[:6000]
         snapshot_hash = _stable_hash(rendered_text)
-        evidence_hashes.append(snapshot_hash)
+        observed_snapshot_hashes.append(snapshot_hash)
         source_payloads.append(
             {
                 "source_index": index + 1,
@@ -142,7 +153,6 @@ def _adjudicate_from_sources(
                 "text": rendered_text,
             }
         )
-    evidence_bundle_hash = _stable_hash(json.dumps(evidence_hashes, separators=(",", ":")))
     unique_hosts = len({source["host"] for source in source_manifest})
 
     prompt = f"""
@@ -164,14 +174,14 @@ Return only minified JSON with exactly these keys:
 - unique_hosts: number of independent source hosts reviewed
 - matched_sources: number of sources that directly support the claim
 - contradicted_sources: number of sources that directly contradict the claim
-- evidence_bundle_hash: exactly "{evidence_bundle_hash}"
+- source_bundle_hash: exactly "{source_bundle_hash}"
 - summary: concise explanation under 450 characters
 
 Rules:
 - Prefer "insufficient" when sources are thin, unrelated, inaccessible, or mostly repeat each other.
 - Use "mixed" when material sources disagree or support only part of the claim.
 - Do not reward claims that rely on a single source duplicated across mirrors.
-- Treat a source as provenance-bearing only when its URL, host, source type, and snapshot hash are present.
+- Treat a source as provenance-bearing only when its URL, host, source type, and URL hash are present.
 - Penalize bundles where sources are from the same host or mostly repeat the same text.
 - Count only direct evidence, not vague similarity.
 - Do not invent support that is not visible in the rendered source text.
@@ -186,9 +196,13 @@ Rules:
         "unique_hosts": int(data["unique_hosts"]),
         "matched_sources": int(data["matched_sources"]),
         "contradicted_sources": int(data["contradicted_sources"]),
-        "evidence_bundle_hash": str(data["evidence_bundle_hash"]),
+        "source_bundle_hash": str(data["source_bundle_hash"]),
         "summary": str(data["summary"])[:450],
     }
+    # Snapshot hashes are retained for the accepted leader record, but they
+    # are deliberately excluded from validator equality because live pages
+    # can render differently across independent executions.
+    normalized["observed_snapshot_hashes"] = observed_snapshot_hashes
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
 
 
@@ -203,7 +217,7 @@ def _parse_verdict(raw_json: str) -> RegistryVerdict:
     unique_hosts = int(data["unique_hosts"])
     matched_sources = int(data["matched_sources"])
     contradicted_sources = int(data["contradicted_sources"])
-    evidence_bundle_hash = str(data["evidence_bundle_hash"])
+    source_bundle_hash = str(data["source_bundle_hash"])
     summary = str(data["summary"])
 
     if confidence < 0 or confidence > 100:
@@ -216,8 +230,8 @@ def _parse_verdict(raw_json: str) -> RegistryVerdict:
         raise Exception("invalid evidence counts")
     if matched_sources + contradicted_sources > source_count:
         raise Exception("invalid source accounting")
-    if not evidence_bundle_hash.startswith("h") or len(evidence_bundle_hash) < 8:
-        raise Exception("invalid evidence hash")
+    if not source_bundle_hash.startswith("h") or len(source_bundle_hash) < 8:
+        raise Exception("invalid source bundle hash")
     if len(summary) == 0 or len(summary) > 450:
         raise Exception("invalid summary")
 
@@ -228,7 +242,7 @@ def _parse_verdict(raw_json: str) -> RegistryVerdict:
         unique_hosts=u8(unique_hosts),
         matched_sources=u8(matched_sources),
         contradicted_sources=u8(contradicted_sources),
-        evidence_bundle_hash=evidence_bundle_hash,
+        source_bundle_hash=source_bundle_hash,
         summary=summary,
     )
 

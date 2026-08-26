@@ -3,7 +3,7 @@ import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
 export const CLAIM_REGISTRY_CONTRACT_ADDRESS =
-  "0xCdBD7da09eBB093d0C925510A24EeeB6BBfeF365" as const;
+  "0x73594e8c3A4A08Bb3fe24d612f2e1A06c23e13A8" as const;
 
 export type WalletAddress = `0x${string}`;
 
@@ -11,6 +11,7 @@ export type ClaimRegistryInput = {
   walletAddress: WalletAddress;
   claim: string;
   sourceUrls: string[];
+  contractAddress: `0x${string}`;
 };
 
 export type ChainReadOptions = {
@@ -72,12 +73,13 @@ export async function submitRegistryCheck({
   walletAddress,
   claim,
   sourceUrls,
+  contractAddress,
 }: ClaimRegistryInput) {
   const client = createClaimRegistryClient(walletAddress);
   await client.connect("studionet");
 
   const hash = await client.writeContract({
-    address: CLAIM_REGISTRY_CONTRACT_ADDRESS,
+    address: contractAddress,
     functionName: "create_check",
     args: [claim, sourceUrls],
     value: BigInt(0),
@@ -89,9 +91,10 @@ export async function submitRegistryCheck({
     status: TransactionStatus.ACCEPTED,
   });
 
-  const latestCheckId = await readLatestCheckId({ walletAddress });
+  const latestCheckId = await readLatestCheckId({ walletAddress, contractAddress });
   const check = await readRegistryCheck(String(latestCheckId), {
     walletAddress,
+    contractAddress,
   });
 
   return { hash, receipt, latestCheckId: String(latestCheckId), check };

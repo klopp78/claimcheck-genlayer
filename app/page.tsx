@@ -46,7 +46,7 @@ type RegistryRecord = {
   accepted_write?: {
     check_id?: string;
     registry_sequence?: number;
-    evidence_bundle_hash?: string;
+    source_bundle_hash?: string;
   };
   result?: {
     verdict?: string;
@@ -55,7 +55,7 @@ type RegistryRecord = {
     unique_hosts?: number;
     matched_sources?: number;
     contradicted_sources?: number;
-    evidence_bundle_hash?: string;
+    source_bundle_hash?: string;
     summary?: string;
   };
 };
@@ -96,12 +96,15 @@ export default function Home() {
   const [walletAddress, setWalletAddress] = useState<WalletAddress | null>(
     null,
   );
+  const [contractAddress, setContractAddress] = useState(
+    CLAIM_REGISTRY_CONTRACT_ADDRESS,
+  );
   const [checkId, setCheckId] = useState("");
   const [checkCount, setCheckCount] = useState("0");
   const [latestCheckId, setLatestCheckId] = useState("");
   const [chainStatus, setChainStatus] = useState<ChainStatus>("idle");
   const [chainMessage, setChainMessage] = useState(
-    "Use the deployed registry contract, connect a Studio wallet, then create or read checks from on-chain state. The repository includes the v3 source update for provenance and evidence hashes.",
+    "Deploy the v3 registry contract, connect a Studio wallet, then create or read checks from on-chain state.",
   );
   const [txHash, setTxHash] = useState("");
   const [rawRecord, setRawRecord] = useState("");
@@ -144,17 +147,20 @@ export default function Home() {
 
   async function refreshRegistry() {
     try {
+      if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) {
+        throw new Error("Enter a valid 0x contract address.");
+      }
       setChainStatus("reading");
       const [countValue, latestValue] = await Promise.all([
-        readCheckCount({ walletAddress: walletAddress ?? undefined }),
-        readLatestCheckId({ walletAddress: walletAddress ?? undefined }),
+        readCheckCount({ walletAddress: walletAddress ?? undefined, contractAddress }),
+        readLatestCheckId({ walletAddress: walletAddress ?? undefined, contractAddress }),
       ]);
       const nextLatest = String(latestValue ?? "");
       setCheckCount(String(countValue ?? "0"));
       setLatestCheckId(nextLatest);
       setCheckId((current) => current || nextLatest);
       setChainStatus("idle");
-      setChainMessage("Registry metadata loaded from the deployed registry contract.");
+      setChainMessage("Registry metadata loaded from the v3 contract.");
     } catch (error) {
       setChainStatus("error");
       setChainMessage(
@@ -176,6 +182,7 @@ export default function Home() {
       setChainStatus("reading");
       const value = await readRegistryCheck(id, {
         walletAddress: walletAddress ?? undefined,
+        contractAddress,
       });
       setRawRecord(
         typeof value === "string" ? value : JSON.stringify(value, null, 2),
@@ -196,6 +203,7 @@ export default function Home() {
       setChainStatus("reading");
       const latestValue = await readLatestCheckId({
         walletAddress: walletAddress ?? undefined,
+        contractAddress,
       });
       const id = String(latestValue ?? "");
       setLatestCheckId(id);
@@ -222,6 +230,7 @@ export default function Home() {
         walletAddress,
         claim,
         sourceUrls: parsedSources,
+        contractAddress,
       });
       setTxHash(submitted.hash);
       setLatestCheckId(submitted.latestCheckId);
@@ -330,7 +339,7 @@ export default function Home() {
                 <p className="mt-1 break-all text-xs leading-5 text-[#746b60]">
                   {walletAddress
                     ? shortAddress(walletAddress)
-                    : CLAIM_REGISTRY_CONTRACT_ADDRESS}
+                    : "Connect a Studio wallet to write"}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -360,6 +369,17 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
+            <label className="field-label mt-4" htmlFor="contract-address">
+              Studio contract address
+            </label>
+            <input
+              id="contract-address"
+              aria-label="Studio contract address"
+              className="text-input mt-2"
+              onChange={(event) => setContractAddress(event.target.value as `0x${string}`)}
+              value={contractAddress}
+            />
 
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <input
@@ -454,9 +474,9 @@ export default function Home() {
                   Submitter: {record.submitted_by}
                 </p>
                 <p className="mt-2 break-all text-xs text-[#746b60]">
-                  Evidence hash:{" "}
-                  {record.accepted_write?.evidence_bundle_hash ??
-                    result?.evidence_bundle_hash ??
+                  Source bundle:{" "}
+                  {record.accepted_write?.source_bundle_hash ??
+                    result?.source_bundle_hash ??
                     "-"}
                 </p>
                 <p className="mt-2 break-all text-xs text-[#746b60]">
