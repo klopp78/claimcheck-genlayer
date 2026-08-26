@@ -38,7 +38,6 @@ export async function readCheckCount(options: ChainReadOptions = {}) {
     functionName: "get_check_count",
     args: [],
     jsonSafeReturn: true,
-    leaderOnly: true,
   });
 }
 
@@ -50,7 +49,6 @@ export async function readLatestCheckId(options: ChainReadOptions = {}) {
     functionName: "get_latest_check_id",
     args: [],
     jsonSafeReturn: true,
-    leaderOnly: true,
   });
 }
 
@@ -65,7 +63,6 @@ export async function readRegistryCheck(
     functionName: "get_check",
     args: [checkId],
     jsonSafeReturn: true,
-    leaderOnly: true,
   });
 }
 

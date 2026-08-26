@@ -290,7 +290,7 @@ export default function Home() {
             <h2 className="text-xl font-semibold">Create a registry check</h2>
             <p className="max-w-2xl text-sm leading-6 text-[#5c554c]">
               Each submission becomes a persistent on-chain registry entry with
-              its own check ID, provenance manifest, evidence hashes, submitter,
+              its own check ID, provenance manifest, observed snapshots, submitter,
               and consensus result. The UI no longer calculates a local verdict.
             </p>
           </div>
@@ -529,7 +529,7 @@ export default function Home() {
             </div>
             <div className="info-tile">
               <span>Evidence model</span>
-              <strong>Snapshot hashes</strong>
+              <strong>Observed snapshots</strong>
             </div>
             <div className="info-tile">
               <span>Write binding</span>
@@ -559,7 +559,7 @@ export default function Home() {
             <h2 className="text-lg font-semibold">Provenance path</h2>
             <p className="mt-3 text-sm leading-6 text-[#d7cec1]">
               Each stored check includes source hosts, source types, URL hashes,
-              evidence bundle hash, and the accepted write ID.
+              observed snapshots, the source bundle commitment, and the accepted write ID.
             </p>
           </div>
         </div>
